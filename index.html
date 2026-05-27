@@ -1,0 +1,43 @@
+/**
+ * ฟังก์ชันหลักสำหรับแสดงผลหน้า Web App (เมื่อผู้ใช้เปิด URL)
+ */
+function doGet(e) {
+  // เรียกใช้ไฟล์ index.html ที่สร้างไว้
+  var htmlOutput = HtmlService.createHtmlOutputFromFile('index');
+  
+  // ตั้งค่า Meta tag รองรับหน้าจอมือถือและตั้งชื่อ Title แท็บ
+  htmlOutput.addMetaTag('viewport', 'width=device-width, initial-scale=1')
+            .setTitle('ตารางบำรุงรักษาเครื่องมือและอุปกรณ์ประจำวัน (Daily QC)')
+            .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL); // อนุญาตให้ Embed ได้ถ้าจำเป็น
+            
+  return htmlOutput;
+}
+
+/**
+ * (Option เสริม) หากในอนาคตต้องการให้ระบบบันทึกข้อมูลลง Google Sheets อัตโนมัติ แทนการเก็บแค่ในหน้าเว็บ
+ * สามารถเปิดใช้และเขียนฟังก์ชันฝั่ง Server ฝั่งนี้เพิ่มได้เลยครับ เช่น:
+ */
+function saveRecordToGoogleSheets(data) {
+  try {
+    // 1. ผูกกับ Spreadsheet ปัจจุบัน
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Database");
+    if(!sheet) {
+      // ถ้าไม่มีชีต Database ให้สร้างใหม่
+      sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Database");
+      // สร้าง Header
+      sheet.appendRow(["วันที่บันทึก", "เครื่องเอกซเรย์", "ผู้ตรวจเช็ค", "หมายเหตุ"]);
+    }
+    
+    // 2. บันทึกข้อมูลลงแถวใหม่
+    sheet.appendRow([
+      data.date, 
+      data.machine, 
+      data.checker, 
+      data.remarks
+    ]);
+    
+    return { status: "success", message: "บันทึกลง Google Sheets สำเร็จ" };
+  } catch (error) {
+    return { status: "error", message: error.toString() };
+  }
+}
