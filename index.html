@@ -1,43 +1,851 @@
-/**
- * ฟังก์ชันหลักสำหรับแสดงผลหน้า Web App (เมื่อผู้ใช้เปิด URL)
- */
-function doGet(e) {
-  // เรียกใช้ไฟล์ index.html ที่สร้างไว้
-  var htmlOutput = HtmlService.createHtmlOutputFromFile('index');
-  
-  // ตั้งค่า Meta tag รองรับหน้าจอมือถือและตั้งชื่อ Title แท็บ
-  htmlOutput.addMetaTag('viewport', 'width=device-width, initial-scale=1')
-            .setTitle('ตารางบำรุงรักษาเครื่องมือและอุปกรณ์ประจำวัน (Daily QC)')
-            .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL); // อนุญาตให้ Embed ได้ถ้าจำเป็น
-            
-  return htmlOutput;
-}
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ตารางบำรุงรักษาเครื่องมือและอุปกรณ์ประจำวัน</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- SheetJS for Excel Import/Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-/**
- * (Option เสริม) หากในอนาคตต้องการให้ระบบบันทึกข้อมูลลง Google Sheets อัตโนมัติ แทนการเก็บแค่ในหน้าเว็บ
- * สามารถเปิดใช้และเขียนฟังก์ชันฝั่ง Server ฝั่งนี้เพิ่มได้เลยครับ เช่น:
- */
-function saveRecordToGoogleSheets(data) {
-  try {
-    // 1. ผูกกับ Spreadsheet ปัจจุบัน
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Database");
-    if(!sheet) {
-      // ถ้าไม่มีชีต Database ให้สร้างใหม่
-      sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Database");
-      // สร้าง Header
-      sheet.appendRow(["วันที่บันทึก", "เครื่องเอกซเรย์", "ผู้ตรวจเช็ค", "หมายเหตุ"]);
-    }
-    
-    // 2. บันทึกข้อมูลลงแถวใหม่
-    sheet.appendRow([
-      data.date, 
-      data.machine, 
-      data.checker, 
-      data.remarks
-    ]);
-    
-    return { status: "success", message: "บันทึกลง Google Sheets สำเร็จ" };
-  } catch (error) {
-    return { status: "error", message: error.toString() };
-  }
-}
+    <style>
+        body {
+            font-family: 'Sarabun', 'Inter', sans-serif;
+            background-color: #f0f4f8; /* สบายตา โทนขาว-ฟ้าอ่อน */
+        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        .custom-checkbox {
+            width: 1.25rem;
+            height: 1.25rem;
+            border-radius: 0.25rem;
+            color: #1e3a8a;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="text-slate-800 flex flex-col min-h-screen">
+
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-blue-900 to-blue-700 text-white shadow-lg px-6 py-4 sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-4">
+                <div class="bg-white/10 p-3 rounded-xl backdrop-blur-sm border border-white/20">
+                    <i class="fa-solid fa-clipboard-check text-2xl text-blue-200"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl sm:text-2xl font-bold tracking-wide">ตารางบำรุงรักษาเครื่องมือและอุปกรณ์ประจำวัน</h1>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="bg-blue-500 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-sm">Daily QC (ทุกวัน)</span>
+                        <p class="text-xs text-blue-100 font-medium">ระบบบันทึกการตรวจสอบความพร้อมก่อนและหลังใช้งาน</p>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="openRecordModal()" class="bg-white text-blue-800 hover:bg-blue-50 px-5 py-2.5 rounded-xl font-bold shadow-md transition-all flex items-center gap-2 text-sm transform active:scale-95 border border-blue-100">
+                    <i class="fa-solid fa-plus-circle"></i>
+                    <span>บันทึก QC ประจำวัน</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex-1 flex flex-col lg:flex-row gap-6">
+        
+        <!-- Sidebar Controls -->
+        <aside class="w-full lg:w-80 flex-shrink-0 flex flex-col gap-5">
+            
+            <!-- Machine Selection -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                <h2 class="text-sm font-bold text-blue-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-x-ray text-blue-600"></i>
+                    <span>เลือกเครื่องเอกซเรย์</span>
+                </h2>
+                <div class="space-y-2.5">
+                    <label class="block cursor-pointer">
+                        <input type="radio" name="viewMachine" value="old_bldg" onchange="changeView()" class="peer sr-only">
+                        <div class="p-3 rounded-xl border border-slate-200 peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:ring-1 peer-checked:ring-blue-600 transition-all">
+                            <p class="text-xs font-bold text-slate-800">เครื่องเอกซเรย์ตึกเก่า</p>
+                            <p class="text-[10px] text-slate-500 mt-0.5">SHIMADZU รุ่น Mobile Art Evolution 32 kW (300 Kv)</p>
+                        </div>
+                    </label>
+                    <label class="block cursor-pointer">
+                        <input type="radio" name="viewMachine" value="new_bldg" checked onchange="changeView()" class="peer sr-only">
+                        <div class="p-3 rounded-xl border border-slate-200 peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:ring-1 peer-checked:ring-blue-600 transition-all">
+                            <p class="text-xs font-bold text-slate-800">เครื่องเอกซเรย์ตึกใหม่</p>
+                            <p class="text-[10px] text-slate-500 mt-0.5">Shimadzu รุ่น UD 150L - 40E (630 mA 150 Kv)</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                <h2 class="text-sm font-bold text-slate-700 uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-filter text-blue-500"></i>
+                    <span>ค้นหาและกรองข้อมูล</span>
+                </h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1.5">เลือกเดือนที่ต้องการดู</label>
+                        <select id="filterMonth" onchange="changeView()" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium">
+                            <!-- Populated via JS -->
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1.5">ชื่อผู้บันทึกในแต่ละวัน</label>
+                        <div class="relative">
+                            <input type="text" id="filterRecorder" oninput="changeView()" placeholder="ค้นหาชื่อเจ้าหน้าที่..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                            <i class="fa-solid fa-user-nurse absolute left-3 top-2.5 text-slate-400"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Import / Export Section -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-blue-200">
+                <h2 class="text-sm font-bold text-slate-700 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-file-import text-blue-600"></i>
+                    <span>จัดการไฟล์ข้อมูล</span>
+                </h2>
+                
+                <div class="space-y-3">
+                    <!-- Export -->
+                    <button onclick="exportToExcelMatrix()" class="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-semibold py-2 px-4 rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-download"></i>
+                        <span>ดาวน์โหลด Excel รูปแบบตาราง</span>
+                    </button>
+
+                    <div class="relative mt-2">
+                        <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-200"></div></div>
+                        <div class="relative flex justify-center"><span class="bg-white px-2 text-[10px] text-slate-400">หรือ</span></div>
+                    </div>
+                    
+                    <!-- Import -->
+                    <div class="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/30 rounded-xl p-3 text-center cursor-pointer relative transition-all">
+                        <input type="file" id="fileImport" accept=".csv, .xlsx" onchange="handleFileImport(event)" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+                        <div class="flex flex-col items-center justify-center gap-1">
+                            <i class="fa-solid fa-cloud-arrow-up text-xl text-blue-500"></i>
+                            <span class="text-xs font-semibold text-slate-700 mt-1">นำเข้าไฟล์ Excel/CSV</span>
+                            <span class="text-[9px] text-slate-500">รองรับไฟล์ตาราง Daily QC รายเดือน</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Dashboard Area -->
+        <main class="flex-1 flex flex-col gap-6 overflow-hidden">
+            
+            <!-- Statistics -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                    <div class="w-12 h-12 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center flex-shrink-0">
+                        <i class="fa-regular fa-calendar-check text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase">วันที่ตรวจเช็คแล้ว</p>
+                        <h4 class="text-xl sm:text-2xl font-bold text-slate-800"><span id="statChecked">0</span> <span class="text-sm font-medium text-slate-500">วัน</span></h4>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+                    <div class="w-12 h-12 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center flex-shrink-0">
+                        <i class="fa-regular fa-calendar-minus text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase">วันที่ยังไม่เช็ค</p>
+                        <h4 class="text-xl sm:text-2xl font-bold text-slate-600"><span id="statMissed">0</span> <span class="text-sm font-medium text-slate-500">วัน</span></h4>
+                    </div>
+                </div>
+
+                <div class="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm col-span-2 flex items-center gap-4">
+                    <div class="w-16 h-16 flex-shrink-0 relative">
+                        <canvas id="completionChart"></canvas>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-xs font-semibold text-slate-600 mb-1">ความคืบหน้าการทำ QC ประจำเดือน</p>
+                        <div class="w-full bg-slate-100 rounded-full h-2.5 mb-1 overflow-hidden">
+                            <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-blue-700 h-2.5 rounded-full transition-all duration-1000" style="width: 0%"></div>
+                        </div>
+                        <p class="text-[10px] text-slate-400 text-right" id="progressText">ดำเนินการแล้ว 0%</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Calendar View -->
+            <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 border-b border-slate-100 pb-3">
+                    <div>
+                        <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-calendar-day text-blue-600"></i>
+                            <span>ปฏิทินสถานะการตรวจเช็ค</span>
+                        </h2>
+                        <p class="text-xs text-blue-600 font-semibold mt-1" id="calendarSubtitle">ประจำเดือน...</p>
+                    </div>
+                    <div class="flex gap-3 text-[10px] font-medium bg-slate-50 p-2 rounded-lg border border-slate-200">
+                        <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded bg-blue-600"></span> บันทึกแล้ว</div>
+                        <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded bg-amber-400"></span> ยังไม่บันทึก</div>
+                    </div>
+                </div>
+
+                <!-- Calendar Grid (Days 1-31 format instead of standard week layout for easier mapping to physical sheet) -->
+                <div class="grid grid-cols-7 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-10 xl:grid-cols-11 gap-2" id="calendarGrid">
+                    <!-- Dynamic rendering via JS -->
+                </div>
+            </div>
+
+            <!-- List View -->
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex-1 flex flex-col min-h-[300px]">
+                <div class="p-4 border-b border-slate-100 bg-slate-50/50">
+                    <h2 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-list-check text-blue-600"></i>
+                        <span>รายการบันทึก (เรียงตามวันที่ล่าสุด)</span>
+                    </h2>
+                </div>
+                <div class="overflow-x-auto flex-1">
+                    <table class="w-full text-left border-collapse min-w-[700px]">
+                        <thead>
+                            <tr class="bg-blue-900 text-white text-xs uppercase tracking-wider">
+                                <th class="p-3 w-28 font-semibold text-center">วันที่</th>
+                                <th class="p-3 w-32 font-semibold">สถานะ QC</th>
+                                <th class="p-3 w-40 font-semibold">ผู้บันทึก</th>
+                                <th class="p-3 font-semibold">หมายเหตุ</th>
+                                <th class="p-3 w-24 text-center font-semibold">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody" class="divide-y divide-slate-100 text-sm bg-white">
+                            <!-- Dynamic -->
+                        </tbody>
+                    </table>
+                    
+                    <div id="emptyTable" class="hidden p-8 text-center flex flex-col items-center justify-center gap-2">
+                        <div class="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-1">
+                            <i class="fa-regular fa-folder-open text-2xl text-slate-300"></i>
+                        </div>
+                        <p class="text-sm font-semibold text-slate-600">ไม่พบข้อมูลในเดือนนี้</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Form -->
+    <div id="recordModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden transition-opacity duration-300 opacity-0">
+        <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl transform transition-transform duration-300 scale-95" id="modalContainer">
+            
+            <div class="bg-gradient-to-r from-blue-900 to-blue-700 text-white px-6 py-4 flex justify-between items-center rounded-t-2xl flex-shrink-0 shadow-sm">
+                <h3 class="font-bold flex items-center gap-2 text-lg">
+                    <i class="fa-solid fa-clipboard-check text-blue-200"></i>
+                    <span id="modalTitle">บันทึก Daily QC</span>
+                </h3>
+                <button onclick="closeRecordModal()" class="text-white/70 hover:text-white transition-colors">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+
+            <div class="p-6 overflow-y-auto flex-1 custom-scrollbar">
+                <form id="qcForm" onsubmit="saveRecord(event)" class="space-y-6">
+                    <input type="hidden" id="formIsEdit" value="false">
+
+                    <!-- Information row -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                        <div class="md:col-span-1">
+                            <label class="block text-xs font-bold text-slate-700 mb-1.5">วันที่ตรวจเช็ค</label>
+                            <input type="date" id="formDate" required class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-medium" />
+                        </div>
+                        <div class="md:col-span-2">
+                            <label class="block text-xs font-bold text-slate-700 mb-1.5">เครื่องเอกซเรย์ที่ตรวจ</label>
+                            <select id="formMachine" required class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-medium text-blue-900">
+                                <option value="old_bldg">ตึกเก่า: SHIMADZU รุ่น Mobile Art Evolution 32 kW (300 Kv)</option>
+                                <option value="new_bldg">ตึกใหม่: Shimadzu รุ่น UD 150L - 40E (630 mA 150 Kv)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Checklist Container -->
+                    <div class="border border-slate-200 rounded-xl overflow-hidden">
+                        <div class="bg-blue-50 px-4 py-3 flex justify-between items-center border-b border-slate-200">
+                            <h4 class="font-bold text-blue-900 text-sm">รายการตรวจสอบ (Checklist)</h4>
+                            <button type="button" onclick="selectAllCheckboxes()" class="text-[11px] font-semibold text-blue-700 hover:bg-blue-100 bg-white px-3 py-1.5 rounded-lg border border-blue-200 transition-colors shadow-sm">
+                                <i class="fa-solid fa-check-double"></i> ติ๊กปกติทั้งหมด
+                            </button>
+                        </div>
+
+                        <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+                            <!-- 1. ก่อนใช้งาน -->
+                            <div>
+                                <h5 class="font-bold text-xs text-slate-800 border-b border-slate-100 pb-2 mb-3">1) ก่อนใช้งาน</h5>
+                                <div class="space-y-2.5" id="checklistBefore">
+                                    <!-- Rendered by JS -->
+                                </div>
+                            </div>
+                            
+                            <!-- 2. หลังใช้งาน + Other info -->
+                            <div class="flex flex-col gap-6">
+                                <div>
+                                    <h5 class="font-bold text-xs text-slate-800 border-b border-slate-100 pb-2 mb-3">2) หลังใช้งาน</h5>
+                                    <div class="space-y-2.5" id="checklistAfter">
+                                        <!-- Rendered by JS -->
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 flex-1">
+                                    <div class="mb-4">
+                                        <label class="block text-xs font-bold text-slate-700 mb-1.5">ผู้ทำการตรวจเช็ค / ผู้บันทึก</label>
+                                        <input type="text" id="formChecker" required placeholder="เช่น วารุณี, การัณย์ญู, วีณา, นงนภัส" class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-700 mb-1.5">หมายเหตุ (ถ้ามี)</label>
+                                        <textarea id="formRemarks" rows="2" placeholder="ระบุอาการผิดปกติ หรือ - " class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-2xl flex-shrink-0">
+                <button type="button" onclick="closeRecordModal()" class="px-5 py-2.5 bg-white border border-slate-300 text-slate-700 text-sm font-bold rounded-xl hover:bg-slate-100 transition-colors">ยกเลิก</button>
+                <button type="submit" form="qcForm" class="px-6 py-2.5 bg-blue-700 text-white text-sm font-bold rounded-xl shadow-md hover:bg-blue-800 transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-save"></i> บันทึกข้อมูล
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-12 opacity-0 pointer-events-none transition-all duration-300">
+        <div class="bg-slate-800 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 border border-slate-700">
+            <i class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>
+            <span id="toastMsg" class="text-sm font-medium"></span>
+        </div>
+    </div>
+
+    <script>
+        // --- DATA DEFINITION ---
+        const checklistItems = {
+            before: [
+                { id: "1.1", text: "1.1 ทำความสะอาดภายนอกของหลอดเอกซเรย์ เตียง bucky และ control" },
+                { id: "1.2", text: "1.2 เช็คระบบล็อครางเลื่อนของเครื่อง" },
+                { id: "1.3", text: "1.3 เช็คระบบล็อครางเลื่อนของหัวหลอด" },
+                { id: "1.4", text: "1.4 เช็คระบบล็อครางเลื่อนของเตียง" },
+                { id: "1.5", text: "1.5 ตรวจเช็ค Bucky stand และ bucky table" },
+                { id: "1.6", text: "1.6 ตรวจเช็คคอลลิเมเตอร์" },
+                { id: "1.7", text: "1.7 ตรวจเช็คปุ่มสวิทซ์ตั้งค่าต่างๆ" },
+                { id: "1.8", text: "1.8 ตรวจเช็ค hand switch" },
+                { id: "1.9", text: "1.9 ตรวจเช็คการรั่วซึมของน้ำมันไฟแรงสูงที่หัวหลอด" },
+                { id: "1.10", text: "1.10 ตรวจเช็คระบบสายไฟต่างๆ" },
+                { id: "1.11", text: "1.11 ตรวจเช็คชุดค่า Voltmeter,Ampmeter" }
+            ],
+            after: [
+                { id: "2.1", text: "2.1 ปรับหัวหลอดให้อยู่แนวตั้งขั้วบวกอยู่ด้านบน" },
+                { id: "2.2", text: "2.2 ปิด Switch เครื่อง และปิด Main Switch" }
+            ]
+        };
+        const allIds = [...checklistItems.before, ...checklistItems.after].map(i => i.id);
+        const thaiMonths = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+
+        let dbRecords = [];
+        let chartInstance = null;
+
+        // --- INIT ---
+        window.onload = () => {
+            renderChecklistUI();
+            updateMonthDropdown();
+            changeView();
+        };
+
+        function renderChecklistUI() {
+            const createHtml = (item) => `
+                <label class="flex items-start gap-2.5 cursor-pointer group hover:bg-blue-50/50 p-1 rounded-lg transition-colors">
+                    <input type="checkbox" id="cb_${item.id}" class="custom-checkbox mt-0.5 border-slate-300 focus:ring-blue-500 rounded">
+                    <span class="text-[12px] text-slate-700 group-hover:text-blue-800 leading-tight">${item.text}</span>
+                </label>
+            `;
+            document.getElementById("checklistBefore").innerHTML = checklistItems.before.map(createHtml).join('');
+            document.getElementById("checklistAfter").innerHTML = checklistItems.after.map(createHtml).join('');
+        }
+
+        function updateMonthDropdown(forceMonthStr = null) {
+            const select = document.getElementById("filterMonth");
+            const existingOptions = Array.from(select.options).map(o => o.value);
+            
+            // Build list of months from data + current month
+            const monthsSet = new Set();
+            const today = new Date();
+            monthsSet.add(`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`);
+            
+            dbRecords.forEach(r => {
+                monthsSet.add(r.date.substring(0, 7)); // YYYY-MM
+            });
+            if(forceMonthStr) monthsSet.add(forceMonthStr);
+
+            const sortedMonths = Array.from(monthsSet).sort().reverse();
+            
+            // Rebuild if changed
+            if (sortedMonths.join(',') !== existingOptions.join(',')) {
+                const currentVal = select.value || forceMonthStr || `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+                select.innerHTML = "";
+                
+                sortedMonths.forEach(ym => {
+                    const [y, m] = ym.split('-');
+                    const text = `${thaiMonths[parseInt(m)-1]} ${parseInt(y) + 543}`;
+                    const opt = document.createElement("option");
+                    opt.value = ym;
+                    opt.textContent = text;
+                    if(ym === currentVal) opt.selected = true;
+                    select.appendChild(opt);
+                });
+            }
+        }
+
+        // --- RENDERING VIEWS ---
+        function changeView() {
+            const machine = document.querySelector('input[name="viewMachine"]:checked').value;
+            const monthVal = document.getElementById("filterMonth").value; 
+            const searchQ = document.getElementById("filterRecorder").value.toLowerCase().trim();
+
+            if (!monthVal) return;
+            const [year, month] = monthVal.split('-');
+            const daysInMonth = new Date(year, month, 0).getDate();
+
+            // Setup Header text
+            const machineName = machine === 'old_bldg' ? 'ตึกเก่า' : 'ตึกใหม่';
+            document.getElementById("calendarSubtitle").textContent = `เครื่องเอกซเรย์${machineName} | ${thaiMonths[parseInt(month)-1]} ${parseInt(year)+543}`;
+
+            // Filter data
+            const records = dbRecords.filter(r => r.machine === machine && r.date.startsWith(monthVal));
+            const filteredBySearch = records.filter(r => searchQ === "" || r.checker.toLowerCase().includes(searchQ));
+
+            renderStats(records, daysInMonth, monthVal);
+            renderCalendarBoxes(year, month, daysInMonth, records);
+            renderTable(filteredBySearch);
+        }
+
+        function renderStats(records, daysInMonth, monthVal) {
+            const uniqueDates = new Set(records.map(r => r.date));
+            const checkedCount = uniqueDates.size;
+            const missedCount = Math.max(0, daysInMonth - checkedCount);
+
+            document.getElementById("statChecked").textContent = checkedCount;
+            document.getElementById("statMissed").textContent = missedCount;
+
+            const percent = daysInMonth === 0 ? 0 : Math.round((checkedCount / daysInMonth) * 100);
+            document.getElementById("progressBar").style.width = `${percent}%`;
+            document.getElementById("progressText").textContent = `ดำเนินการแล้ว ${percent}% ของเดือน`;
+
+            const ctx = document.getElementById("completionChart").getContext("2d");
+            if (chartInstance) chartInstance.destroy();
+            chartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['เช็คแล้ว', 'ยังไม่เช็ค'],
+                    datasets: [{
+                        data: [checkedCount, missedCount],
+                        backgroundColor: ['#1d4ed8', '#e2e8f0'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, cutout: '75%',
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } }
+                }
+            });
+        }
+
+        function renderCalendarBoxes(year, month, daysInMonth, records) {
+            const grid = document.getElementById("calendarGrid");
+            grid.innerHTML = "";
+            const recordMap = {};
+            records.forEach(r => recordMap[r.date] = r);
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = `${year}-${month}-${String(day).padStart(2, '0')}`;
+                const rec = recordMap[dateStr];
+
+                const box = document.createElement("div");
+                box.className = "h-16 rounded-xl border flex flex-col justify-center items-center cursor-pointer transition-transform hover:scale-105 shadow-sm relative overflow-hidden";
+                
+                if (rec) {
+                    const allOk = allIds.every(id => rec.checks[id]);
+                    box.className += allOk ? " bg-blue-50 border-blue-200" : " bg-amber-50 border-amber-200";
+                    
+                    box.innerHTML = `
+                        <span class="text-xs font-bold ${allOk ? 'text-blue-700' : 'text-amber-700'}">${day}</span>
+                        <div class="mt-1 flex gap-1">
+                            ${allOk ? '<i class="fa-solid fa-check text-blue-500 text-[10px]"></i>' : '<i class="fa-solid fa-exclamation text-amber-500 text-[10px]"></i>'}
+                        </div>
+                        <div class="absolute bottom-0 w-full text-center bg-white/50 text-[8px] text-slate-500 truncate px-1">${rec.checker}</div>
+                    `;
+                    box.onclick = () => openEditModal(rec);
+                } else {
+                    box.className += " bg-white border-slate-200 hover:border-blue-400";
+                    box.innerHTML = `<span class="text-xs font-bold text-slate-400">${day}</span>`;
+                    box.onclick = () => openAddModalWithDate(dateStr);
+                }
+                grid.appendChild(box);
+            }
+        }
+
+        function renderTable(records) {
+            const tbody = document.getElementById("tableBody");
+            const empty = document.getElementById("emptyTable");
+            tbody.innerHTML = "";
+            if (records.length === 0) {
+                empty.classList.remove("hidden");
+                return;
+            }
+            empty.classList.add("hidden");
+
+            const sorted = [...records].sort((a,b) => b.date.localeCompare(a.date));
+            sorted.forEach(r => {
+                const allOk = allIds.every(id => r.checks[id]);
+                const badge = allOk 
+                    ? `<span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded"><i class="fa-solid fa-check mr-1"></i>ครบถ้วน</span>`
+                    : `<span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded"><i class="fa-solid fa-exclamation mr-1"></i>ไม่ครบ</span>`;
+                
+                const tr = document.createElement("tr");
+                tr.className = "hover:bg-slate-50 transition-colors";
+                tr.innerHTML = `
+                    <td class="p-3 font-semibold text-slate-700 text-center">${r.date.split('-')[2]} ${thaiMonths[parseInt(r.date.split('-')[1])-1].substring(0,3)}</td>
+                    <td class="p-3">${badge}</td>
+                    <td class="p-3 font-medium text-slate-600">${r.checker}</td>
+                    <td class="p-3 text-xs text-slate-500 truncate max-w-[150px]">${r.remarks || "-"}</td>
+                    <td class="p-3 text-center">
+                        <button onclick='openEditModal(${JSON.stringify(r).replace(/'/g, "\\'")})' class="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-1.5 rounded-lg transition-colors">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // --- FORM LOGIC ---
+        function openRecordModal() {
+            document.getElementById("formIsEdit").value = "false";
+            document.getElementById("modalTitle").textContent = "บันทึก Daily QC ใหม่";
+            document.getElementById("formDate").value = new Date().toISOString().split('T')[0];
+            document.getElementById("formMachine").value = document.querySelector('input[name="viewMachine"]:checked').value;
+            resetForm();
+            showModal();
+        }
+
+        function openAddModalWithDate(dateStr) {
+            document.getElementById("formIsEdit").value = "false";
+            document.getElementById("modalTitle").textContent = `บันทึก QC ย้อนหลัง`;
+            document.getElementById("formDate").value = dateStr;
+            document.getElementById("formMachine").value = document.querySelector('input[name="viewMachine"]:checked').value;
+            resetForm();
+            showModal();
+        }
+
+        function openEditModal(r) {
+            document.getElementById("formIsEdit").value = r.id;
+            document.getElementById("modalTitle").textContent = `แก้ไขข้อมูล`;
+            document.getElementById("formDate").value = r.date;
+            document.getElementById("formMachine").value = r.machine;
+            document.getElementById("formChecker").value = r.checker;
+            document.getElementById("formRemarks").value = r.remarks === "-" ? "" : r.remarks;
+
+            allIds.forEach(id => {
+                const el = document.getElementById("cb_" + id);
+                if (el) el.checked = !!r.checks[id];
+            });
+            showModal();
+        }
+
+        function resetForm() {
+            document.getElementById("formChecker").value = "";
+            document.getElementById("formRemarks").value = "";
+            selectAllCheckboxes();
+        }
+
+        function selectAllCheckboxes() {
+            allIds.forEach(id => {
+                const el = document.getElementById("cb_" + id);
+                if(el) el.checked = true;
+            });
+        }
+
+        function saveRecord(e) {
+            e.preventDefault();
+            const date = document.getElementById("formDate").value;
+            const machine = document.getElementById("formMachine").value;
+            const checker = document.getElementById("formChecker").value.trim();
+            const remarks = document.getElementById("formRemarks").value.trim() || "-";
+            const isEditId = document.getElementById("formIsEdit").value;
+
+            const checks = {};
+            allIds.forEach(id => {
+                const el = document.getElementById("cb_" + id);
+                checks[id] = el ? el.checked : false;
+            });
+
+            if (isEditId !== "false") {
+                const idx = dbRecords.findIndex(r => r.id === isEditId);
+                if (idx !== -1) dbRecords[idx] = { id: isEditId, date, machine, checker, remarks, checks };
+                showToast("อัปเดตข้อมูลเรียบร้อยแล้ว");
+            } else {
+                const exists = dbRecords.some(r => r.date === date && r.machine === machine);
+                if (exists) return alert("วันนี้มีการบันทึกเครื่องนี้ไปแล้ว กรุณาแก้ไขจากตารางแทนครับ");
+                const newId = `${machine}_${date}_${Date.now()}`;
+                dbRecords.push({ id: newId, date, machine, checker, remarks, checks });
+                showToast("บันทึกข้อมูลเรียบร้อยแล้ว");
+            }
+
+            document.querySelector(`input[name="viewMachine"][value="${machine}"]`).checked = true;
+            updateMonthDropdown(date.substring(0,7));
+            document.getElementById("filterMonth").value = date.substring(0,7);
+            changeView();
+            closeRecordModal();
+        }
+
+        function showModal() {
+            const m = document.getElementById("recordModal");
+            const c = document.getElementById("modalContainer");
+            m.classList.remove("hidden");
+            setTimeout(() => { m.classList.remove("opacity-0"); c.classList.remove("scale-95"); }, 10);
+        }
+
+        function closeRecordModal() {
+            const m = document.getElementById("recordModal");
+            const c = document.getElementById("modalContainer");
+            m.classList.add("opacity-0"); c.classList.add("scale-95");
+            setTimeout(() => { m.classList.add("hidden"); }, 300);
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById("toast");
+            document.getElementById("toastMsg").textContent = msg;
+            t.classList.remove("translate-y-12", "opacity-0", "pointer-events-none");
+            setTimeout(() => t.classList.add("translate-y-12", "opacity-0", "pointer-events-none"), 3000);
+        }
+
+        // --- SMART IMPORT CSV/EXCEL ---
+        function handleFileImport(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                try {
+                    const data = new Uint8Array(evt.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const jsonMatrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+                    
+                    parseMatrixToRecords(jsonMatrix, file.name);
+                } catch(err) {
+                    alert("เกิดข้อผิดพลาดในการอ่านไฟล์: " + err.message);
+                }
+                e.target.value = ""; // reset
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function parseMatrixToRecords(matrix, filename) {
+            if (matrix.length < 5) return alert("รูปแบบไฟล์ไม่ถูกต้อง (สั้นเกินไป)");
+
+            // 1. Detect Month and Year from Header (Row 2 or 3 usually)
+            let monthStr = "01", yearStr = new Date().getFullYear().toString();
+            let machineType = filename.includes("เก่า") ? "old_bldg" : "new_bldg";
+
+            for(let r=0; r<5; r++) {
+                const rowStr = (matrix[r] || []).join(" ");
+                if(rowStr.includes("ประจำเดือน")) {
+                    thaiMonths.forEach((m, idx) => {
+                        if (rowStr.includes(m)) monthStr = String(idx + 1).padStart(2, '0');
+                    });
+                    const yearMatch = rowStr.match(/25\d{2}/);
+                    if (yearMatch) yearStr = (parseInt(yearMatch[0]) - 543).toString();
+                }
+                if(rowStr.includes("Mobile Art")) machineType = "old_bldg";
+                if(rowStr.includes("UD 150L")) machineType = "new_bldg";
+            }
+
+            const yyyy_mm = `${yearStr}-${monthStr}`;
+
+            // 2. Find row index where days are listed (1, 2, 3... 31)
+            let headerRowIdx = -1;
+            for(let r=0; r<10; r++) {
+                const row = matrix[r] || [];
+                if(row.includes("ลำดับ") || row.includes("รายการบำรุงรักษา") || row.includes(1)) {
+                    headerRowIdx = r; break;
+                }
+            }
+            if(headerRowIdx === -1) return alert("ไม่พบแถววันที่ (1-31) ในไฟล์ Excel");
+
+            // 3. Map Columns to Days
+            const colToDay = {};
+            const headerRow = matrix[headerRowIdx];
+            for (let c=0; c<headerRow.length; c++) {
+                const val = parseInt(headerRow[c]);
+                if (val >= 1 && val <= 31) colToDay[c] = String(val).padStart(2, '0');
+            }
+
+            // 4. Temporary structure to collect data per day
+            const parsedDays = {}; 
+            Object.values(colToDay).forEach(d => {
+                parsedDays[d] = { 
+                    date: `${yyyy_mm}-${d}`, machine: machineType, checker: "", remarks: "-", 
+                    checks: {} 
+                };
+            });
+
+            // 5. Parse Data Rows
+            let currentItemNumber = null;
+            for(let r=headerRowIdx+1; r<matrix.length; r++) {
+                const row = matrix[r] || [];
+                const labelCol = (row[1] || "").toString().trim();
+                const numCol = (row[0] || "").toString().trim();
+                
+                // Identify Item ID based on rows (1 to 11, then 1 to 2)
+                if (numCol && !isNaN(parseInt(numCol))) {
+                    // Check context if it's before or after
+                    const isBefore = r < (matrix.findIndex(rx => (rx[1]||"").includes("หลังใช้งานประจำวัน")) || 999);
+                    currentItemNumber = isBefore ? `1.${numCol}` : `2.${numCol}`;
+                } else {
+                    currentItemNumber = null;
+                }
+
+                // Process Checklist rows
+                if (currentItemNumber && allIds.includes(currentItemNumber)) {
+                    Object.keys(colToDay).forEach(c => {
+                        const day = colToDay[c];
+                        const val = (row[c] || "").toString().trim();
+                        // If cell contains "/", it's checked
+                        parsedDays[day].checks[currentItemNumber] = val === "/"; 
+                    });
+                }
+
+                // Process Recorder ("ผู้บันทึก")
+                if (numCol.includes("ผู้บันทึก") || labelCol.includes("ผู้บันทึก")) {
+                    Object.keys(colToDay).forEach(c => {
+                        const val = (row[c] || "").toString().trim();
+                        if (val && val !== "/") parsedDays[colToDay[c]].checker = val;
+                    });
+                }
+                
+                // Process Remarks ("หมายเหตุ")
+                if (numCol.includes("หมายเหตุ") || labelCol.includes("หมายเหตุ")) {
+                    // Remarks usually span or sit in a specific place. 
+                    // To keep it simple, if we find remarks row, we assign it. 
+                    // Standard format usually puts notes at bottom.
+                }
+            }
+
+            // 6. Push to dbRecords
+            let importedCount = 0;
+            Object.values(parsedDays).forEach(dayData => {
+                // Only import days that have a checker recorded or at least one check
+                const hasAnyCheck = Object.values(dayData.checks).some(v => v === true);
+                if (dayData.checker || hasAnyCheck) {
+                    // Remove existing for this date/machine to overwrite
+                    dbRecords = dbRecords.filter(x => !(x.date === dayData.date && x.machine === machineType));
+                    
+                    if(!dayData.checker) dayData.checker = "ไม่ระบุ";
+                    // fill empty checks with false
+                    allIds.forEach(id => { if(dayData.checks[id] === undefined) dayData.checks[id] = false; });
+                    
+                    dayData.id = `${machineType}_${dayData.date}_${Date.now()}_${importedCount}`;
+                    dbRecords.push(dayData);
+                    importedCount++;
+                }
+            });
+
+            document.querySelector(`input[name="viewMachine"][value="${machineType}"]`).checked = true;
+            updateMonthDropdown(yyyy_mm);
+            document.getElementById("filterMonth").value = yyyy_mm;
+            changeView();
+            showToast(`นำเข้าสำเร็จ ${importedCount} วัน (${thaiMonths[parseInt(monthStr)-1]} ${yearStr})`);
+        }
+
+        // --- EXPORT MATRIX (LIKE THE UPLOADED FILES) ---
+        function exportToExcelMatrix() {
+            const machine = document.querySelector('input[name="viewMachine"]:checked').value;
+            const monthVal = document.getElementById("filterMonth").value;
+            if(!monthVal) return;
+            
+            const [year, month] = monthVal.split('-');
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const records = dbRecords.filter(r => r.machine === machine && r.date.startsWith(monthVal));
+            
+            if (records.length === 0) return alert("ไม่มีข้อมูลที่จะส่งออกในเดือนนี้");
+
+            // Prepare Matrix Data
+            const wsData = [];
+            const machineNameText = machine === 'old_bldg' ? 'SHIMADZU รุ่น Mobile Art Evolution 32 kW (300 Kv)' : 'Shimadzu รุ่น UD 150L - 40E (630 mA 150 Kv)';
+            const monthText = thaiMonths[parseInt(month)-1];
+            const yearThai = parseInt(year) + 543;
+
+            // Headers
+            wsData.push(["", "ตารางบำรุงรักษาเครื่องมือและอุปกรณ์ประจำวัน"]);
+            wsData.push(["", `เครื่องเอกซเรย์ทั่วไปยี่ห้อ ${machineNameText}`]);
+            wsData.push(["", `ประจำเดือน ${monthText} พ.ศ. ${yearThai}`]);
+            
+            const headerRow = ["ลำดับ", "รายการบำรุงรักษา"];
+            for(let d=1; d<=daysInMonth; d++) headerRow.push(d);
+            wsData.push(headerRow);
+
+            wsData.push(["", "ก่อนใช้งานประจำวัน"]);
+            
+            const getRowData = (itemObj, isAfter = false) => {
+                const row = [itemObj.id.split('.')[1], itemObj.text.substring(4)]; // Number, Label
+                for(let d=1; d<=daysInMonth; d++) {
+                    const dateStr = `${year}-${month}-${String(d).padStart(2,'0')}`;
+                    const rec = records.find(r => r.date === dateStr);
+                    row.push((rec && rec.checks[itemObj.id]) ? "/" : "");
+                }
+                return row;
+            };
+
+            // Before Items
+            checklistItems.before.forEach(item => wsData.push(getRowData(item)));
+            
+            // Checker Before
+            const checkerRow = ["", "ผู้บันทึกก่อนใช้งาน"];
+            for(let d=1; d<=daysInMonth; d++) {
+                const rec = records.find(r => r.date === `${year}-${month}-${String(d).padStart(2,'0')}`);
+                checkerRow.push(rec ? rec.checker : "");
+            }
+            wsData.push(checkerRow);
+
+            wsData.push(["", "หลังใช้งานประจำวัน"]);
+            checklistItems.after.forEach(item => wsData.push(getRowData(item, true)));
+
+            // Save
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            
+            // Set col widths
+            const wscols = [{wch: 5}, {wch: 40}];
+            for(let i=0; i<daysInMonth; i++) wscols.push({wch: 4});
+            ws['!cols'] = wscols;
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Daily QC");
+            XLSX.writeFile(wb, `ตารางบำรุงรักษา_${machine === 'old_bldg'?'ตึกเก่า':'ตึกใหม่'}_${monthText}.xlsx`);
+            showToast("ส่งออกไฟล์ Excel สำเร็จ");
+        }
+
+    </script>
+</body>
+</html>
